@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prueba de Alcance VHF / UHF</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: monospace; user-select: none; }
+    body { background: #070a0e; color: #f1f5f9; display: flex; justify-content: center; align-items: center; min-height: 100vh; padding: 12px; }
+    .app { background: #111827; border: 2px solid #22c55e; border-radius: 16px; padding: 16px; width: 100%; max-width: 400px; }
+    .top { display: flex; justify-content: space-between; font-size: 12px; color: #4ade80; font-weight: bold; margin-bottom: 10px; }
+    select, button { width: 100%; padding: 10px; border-radius: 8px; border: none; font-weight: bold; font-size: 11px; margin-bottom: 8px; }
+    select { background: #1e293b; color: #fff; border: 1px solid #334155; }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 10px; text-align: center; }
+    .box { background: #0f172a; padding: 8px 4px; border-radius: 8px; border: 1px solid #1e293b; font-size: 10px; }
+    .box b { font-size: 13px; color: #fff; display: block; margin-top: 2px; }
+    .barra-fondo { width: 100%; height: 14px; background: #020617; border-radius: 7px; overflow: hidden; margin-bottom: 10px; border: 1px solid #1e293b; }
+    .barra-nivel { height: 100%; width: 85%; background: #22c55e; transition: width 0.3s, background 0.3s; }
+    .b-base { background: #0284c7; color: #fff; }
+    .fila-rx { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+    .b-ok { background: #16a34a; color: #fff; }
+    .b-med { background: #d97706; color: #fff; }
+    .b-bad { background: #dc2626; color: #fff; }
+    .logs { background: #020617; border: 1px dashed #334155; padding: 8px; border-radius: 8px; max-height: 85px; overflow-y: auto; font-size: 10px; color: #94a3b8; }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="top"><span>📻 ALCANCE RADIOS VHF/UHF</span><span id="gpsStat">GPS BUSCANDO</span></div>
+    <select id="selBanda" onchange="recalcular()">
+      <option value="vhf">🌲 VHF 150 MHz (Ideal Selva / Campo Abierto)</option>
+      <option value="uhf">🏢 UHF 446 MHz (Ideal Ciudad / Edificios)</option>
+    </select>
+    <select id="selTerreno" onchange="recalcular()">
+      <option value="2.2">🌾 Terreno Semi-despejado / Carretera</option>
+      <option value="3.2">🌴 Selva Densa / Vegetación Alta (Amazonía)</option>
+      <option value="3.8">🏙️ Zona Urbana / Paredes de Concreto</option>
+    </select>
+    <div class="barra-fondo"><div class="barra-nivel" id="barraSig"></div></div>
+    <div class="grid">
+      <div class="box">DISTANCIA<b id="vDist">0.00 km</b></div>
+      <div class="box">SEÑAL EST.<b id="vDbm">-55 dBm</b></div>
+      <div class="box">ESTADO<b id="vEst">ÓPTIMO</b></div>
+    </div>
+    <button class="b-base" onclick="fijarBase()">📍 FIJAR PUNTO BASE (RADIO A)</button>
+    <div class="fila-rx">
+      <button class="b-ok" onclick="registrar('5/5 CLARO')">✅ 5/5 CLARO</button>
+      <button class="b-med" onclick="registrar('3/5 RUIDO')">⚠️ 3/5 RUIDO</button>
+      <button class="b-bad" onclick="registrar('0/5 CORTE')">❌ SIN SEÑAL</button>
+    </div>
+    <div class="logs" id="logsRadio"></div>
+  </div>
+  <script>
+    const KEY_RAD = 'alcance_vhf_uhf_v1';
+    let baseLat = null, baseLon = null, curLat = null, curLon = null, distKm = 0, estDbm = -55;
+    let bitacora = JSON.parse(localStorage.getItem(KEY_RAD)) || [];
+
+    if (navigator.geolocation) {
+      navigator.geolocation.watchPosition(p => {
+        curLat = p.coords.latitude; curLon = p.coords.longitude;
+        document.getElementById('gpsStat').innerText = `${curLat.toFixed(4)}, ${curLon.toFixed(4)}`;
+        if (baseLat === null) { baseLat = curLat; baseLon = curLon; }
+        recalcular();
+      }, () => { document.getElementById('gpsStat').innerText = 'SIN GPS'; }, { enableHighAccuracy: true });
+    }
+
+    function fijarBase() {
+      if (curLat !== null) { baseLat = curLat; baseLon = curLon; recalcular(); alert('Punto Base (Radio A) fijado en tu ubicación actual.'); }
+    }
+    function recalcular() {
+      if (baseLat !== null && curLat !== null) {
+        const R = 6371, dLat = (curLat - baseLat) * Math.PI / 180, dLon = (curLon - baseLon) * Math.PI / 180;
+        const a = Math.sin(dLat/2)**2 + Math.cos(baseLat*Math.PI/180)*Math.cos(curLat*Math.PI/180)*Math.sin(dLon/2)**2;
+        distKm = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+      }
+      const banda = document.getElementById('selBanda').value;
+      const factorTerreno = parseFloat(document.getElementById('selTerreno').value);
+      const freqMhz = banda === 'vhf' ? 150 : 446;
+      const dMetros = Math.max(10, distKm * 1000);
+      const perdida = 20 * Math.log10(freqMhz) + (10 * factorTerreno * Math.log10(dMetros / 1000)) + 32.44;
+      estDbm = Math.round(37 - perdida); // Asumiendo radio portátil de 5W (+37 dBm)
+
+      document.getElementById('vDist').innerText = distKm < 1 ? `${Math.round(distKm*1000)} m` : `${distKm.toFixed(2)} km`;
+      document.getElementById('vDbm').innerText = `${estDbm} dBm`;
+      const pct = Math.max(5, Math.min(100, Math.round((estDbm + 125) * 1.1)));
+      const bar = document.getElementById('barraSig');
+      bar.style.width = pct + '%';
+      bar.style.background = estDbm > -95 ? '#22c55e' : (estDbm > -112 ? '#f59e0b' : '#ef4444');
+      document.getElementById('vEst').innerText = estDbm > -95 ? 'ÓPTIMO' : (estDbm > -112 ? 'LÍMITE' : 'CORTE');
+    }
+    function registrar(calidad) {
+      const b = document.getElementById('selBanda').value.toUpperCase();
+      const d = distKm < 1 ? `${Math.round(distKm*1000)}m` : `${distKm.toFixed(2)}km`;
+      bitacora.unshift(`${new Date().toLocaleTimeString()} | ${b} | ${d} | ${calidad} (${estDbm}dBm)`);
+      localStorage.setItem(KEY_RAD, JSON.stringify(bitacora));
+      render();
+    }
+    function render() {
+      document.getElementById('logsRadio').innerHTML = bitacora.map(l => `<div>📻 ${l}</div>`).join('') || 'Sin pruebas registradas...';
+    }
+    recalcular(); render();
+  </script>
+</body>
+</html>
